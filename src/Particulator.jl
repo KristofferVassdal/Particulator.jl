@@ -1,12 +1,12 @@
 module Particulator
 export LogLinRange, MultiPopulation, RelativisticCoulomb, totalcs, CollisionTable,
-    Electron, Positron, Photon,
-    NullCollision, ElectronState, PositronState, PhotonState, Population, ORBITALS,
-    nactives, advance!, remove_particle!, eachactive, init!, ChebyshevCollisionTable,
+    Electron, Positron, Photon, SlowElectron,
+    NullCollision, ElectronState, PositronState, PhotonState, SlowElectronState, Population, ORBITALS, 
+    nactives, advance!, remove_particle!, eachactive, init!, ChebyshevCollisionTable, collision_table_from_lxcat,
     repack!, kinenergy, nparticles,
     StateChangeOutcome, ReplaceParticleOutcome, ReplaceParticlePairOutcome, NewParticleOutcome,
     StateChangeOutcome, RemoveParticleOutcome, NullOutcome,
-    RBEB, SeltzerBerger, PhotoElectric,
+    RBEB, SeltzerBerger, PhotoElectric, Excitation, Ionization, Elastic, Attachment,
     BetheHeitler, PositronAnihilation, Compton, KleinNishinaCompton, Moller, Bhaba, BinaryIntervals,
     chebfit, speed,
     AbstractCallback, CombinedCallback, CollisionCounter, WallCallback, VoidCallback,
@@ -14,8 +14,8 @@ export LogLinRange, MultiPopulation, RelativisticCoulomb, totalcs, CollisionTabl
     ParticleCountCallback, PopulationTargetCallback, collision_table_from_processes,
     HomogeneousField, DoubleLayerField, StepField, ConfinedDoubleLayerField, run!, roulette!,
     ElectromagneticField, ContinuumLoss, ChebContinuumLoss, RK2Pusher, RestrictedPusher, NullPusher,
-    NullForcing, CombinedForcing,
-    RestrictedForcing
+    NullForcing, CombinedForcing, FieldForcing,
+    RestrictedForcing, load_lxcat, parse_bolsigplus
 
 
 using Base.Threads: Atomic, @threads, atomic_add!
@@ -32,6 +32,8 @@ using DelimitedFiles
 using LambertW
 using BSplineKit
 using Printf
+using DelimitedFiles
+
 
 import JSON
 
@@ -58,6 +60,7 @@ include("collisions.jl")
 include("electron.jl") 
 include("positron.jl")
 include("photon.jl")
+include("slow-electron.jl")
 include("pusher.jl")
 include("relativistic_coulomb.jl")
 include("rbeb.jl")
@@ -71,7 +74,6 @@ include("anihilation.jl")
 include("compton.jl")
 include("moller.jl")
 include("bhaba.jl")
-include("slow-electron.jl")
 include("field.jl")
 include("zhelezniak_photon.jl")
 include("lxcat.jl")

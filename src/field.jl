@@ -56,6 +56,9 @@ struct ElectromagneticField{E, B} <: AbstractForcing
     b::B
 end
 
+force(em::ElectromagneticField, s::SlowElectronState) =
+    charge(s) * (em.e(s.x, s.t) + cross(velocity(s), em.b(s.x, s.t)))
+
 """
 Compute the instantaneous force on a particle.
 """

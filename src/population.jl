@@ -18,6 +18,9 @@ struct Population{PS <: ParticleState, T, C, K, I}
 
     "Energy cut of this population"
     energy_cut::T
+
+    "Culling threshold for the population"
+    cull::T
 end
 
 
@@ -32,7 +35,7 @@ starting with a vector of super-particle states.
 The collision table must be also given in `collisions`.
 """
 function Population(max_particles::Int, inparticles::Vector{PS},
-                    collisions, energy_cut=0.0) where PS <: ParticleState
+                    collisions, energy_cut=0.0, cull=0.0) where PS <: ParticleState
     init_particles = length(inparticles)
     particles = StructVector{PS}(undef, max_particles)
 
@@ -40,7 +43,7 @@ function Population(max_particles::Int, inparticles::Vector{PS},
         particles[i] = inparticles[i]
     end
 
-    return Population(Atomic{Int}(init_particles), Atomic{Int}(1), particles, collisions, energy_cut)
+    return Population(Atomic{Int}(init_particles), Atomic{Int}(1), particles, collisions, energy_cut, cull)
 end
 
 struct ParticleIterator{P <: Population}
@@ -102,9 +105,15 @@ Add a particle to the population `popl` with super-state super_state.
 """
 function add_particle!(popl::Population, state::ParticleState)
     (;n, particles, collisions) = popl
-    (kinenergy(state) <= popl.energy_cut) && return -1
-    
+    (kinenergy(state) < popl.energy_cut) && return -1
+
+    K = kinenergy(state)
+    p = K < 1e2*co.eV ? 5e-3 : 1.0
+    rand() < p || return -1                       # killed at birth
+    state = setproperties(state, w = state.w / p)
+
     @assert n[] < length(particles) "Maximum number of particles reached"
+
 
     nprev = atomic_add!(n, 1)
     

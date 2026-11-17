@@ -137,3 +137,27 @@ function droplow!(popl, mpopl, thres)
 end
 
 
+function ElectronStateToSlowElectronState!(mpopl)
+    popl = get(mpopl, Electron)
+    prt = popl.particles
+    for i in 1:popl.n[]
+        if prt[i].active && kinenergy(prt[i]) <= popl.energy_cut
+            outcome = ReplaceParticleOutcome(ElectronState{Float64}(prt[i].x, prt[i].p, prt[i].w, prt[i].t), SlowElectronState{Float64}(prt[i].x, prt[i].p/(mass(prt[i]) * gamma(prt[i])), prt[i].w, prt[i].t))
+            apply!(mpopl, outcome, i)
+        end
+    end
+end
+
+function SlowElectronStateToElectronState!(mpopl)
+    popl = get(mpopl, SlowElectron)
+    prt = popl.particles
+    for i in 1:popl.n[]
+        if prt[i].active && kinenergy(prt[i]) > get(mpopl, Electron).energy_cut
+            K = kinenergy(prt[i])                     # the slow state's own (½mv²) energy
+            p = sqrt(K^2 + 2K * co.electron_mc2) / co.c
+            pvec = p * prt[i].v / norm(prt[i].v)
+            outcome = ReplaceParticleOutcome(SlowElectronState{Float64}(prt[i].x, prt[i].v, prt[i].w, prt[i].t), ElectronState{Float64}(prt[i].x, pvec, prt[i].w, prt[i].t))
+            apply!(mpopl, outcome, i)
+        end
+    end
+end

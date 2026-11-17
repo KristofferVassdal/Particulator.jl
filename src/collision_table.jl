@@ -56,6 +56,88 @@ function rate(c::CollisionTable, j, pre)
     return w * c.rate[j, k] + (1 - w) * c.rate[j, k + 1]
 end
 
+function loglog_interp(E, σ)
+    mask = σ .> 0 .&& E .> 0
+    Eₘ, σₘ = E[mask], σ[mask]
+    itp = linear_interpolation(log.(Eₘ), log.(σₘ); extrapolation_bc = Throw())
+    Emin, Emax = first(Eₘ), last(Eₘ)
+    return function (e)
+        e < Emin && return zero(e)
+        e > Emax && return σ[end]
+        return exp(itp(log(e)))
+    end
+end
+
+function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt; safety=1.1)
+    proc = Vector(undef, length(cross))
+    E = Vector(undef, length(cross))
+    σ = Vector(undef, length(cross))
+    th = Vector(undef, length(cross))
+    for i in 1:length(cross)    
+    if cross[i][:kind] == "EFFECTIVE"
+            proc[i] = (cross[i][:target], cross[i][:kind])
+            ind = cross[i][:data]
+            E[i] = [B[1] for B in ind]
+            σ[i] = [B[2] for B in ind]
+            th[i] = cross[i][:mass_ratio]
+        else
+            proc[i] = (cross[i][:target], cross[i][:kind])
+            ind = cross[i][:data]
+            E[i] = [B[1] for B in ind]
+            σ[i] = [B[2] for B in ind]
+            th[i] = cross[i][:threshold]
+    end
+    end
+    E = E*co.eV
+    th = th
+    Emin = 1*co.eV 
+    Emax = 320*co.eV
+    grid = LogLinRange(log(Emin), log(Emax), 10000)
+    f = loglog_interp.(E, σ)
+    rates = zeros(length(proc), length(grid))
+    for j in 1:length(proc)
+        if proc[j][1] == "N2"
+            n_target = co.nair * 0.79
+        elseif proc[j][1] == "O2"
+            n_target = co.nair * 0.21
+        else
+            n_target = co.nair
+        end
+        σj = f[j].(grid)                                                  
+        # EFFECTIVE = elastic momentum transfer + all inelastic (excitation, ionization,   
+        # attachment) of the same molecule. Subtract them to get the elastic part only.    
+        if proc[j][2] == "EFFECTIVE"                                                       
+            for k in 1:length(proc)                                                        
+                k != j && proc[k][1] == proc[j][1] &&                                      
+                    proc[k][2] in ("EXCITATION", "IONIZATION", "ATTACHMENT") || continue   
+                σj .-= f[k].(grid)                                                         
+            end                                                                            
+            σj .= max.(σj, 0.0)   # rounding/interpolation can push it slightly negative  
+        end                                                                                
+        rates[j, :] .= n_target * speed.(Ref(particle), grid) .* σj     
+    end
+    ΔE = speed.(Ref(particle), grid) .* Fdt .* safety 
+    rb = Vector{Float64}(undef, length(grid))
+    total = vec(sum(rates, dims=1))
+    grid1 = collect(grid)
+    for k in 1:length(grid)
+        E_k = grid[k]
+        ΔE_k = ΔE[k]
+        window = (E_k - ΔE_k, E_k + ΔE_k)
+        rb1 =clamp(searchsortedlast(grid1, window[1]), 1, length(grid))
+        rb2 = clamp(searchsortedfirst(grid1, window[2]), 1, length(grid))
+        rb[k] = maximum(@view total[rb1:rb2])
+    end
+    kinds = tuple([proc[i][2] for i in 1:length(proc)]...)
+    function make_process(kind, th)
+        kind == "EFFECTIVE"  && return Elastic{Float64}(th)               # mass ratio
+        kind == "IONIZATION" && return Ionization{Float64}(th * co.eV)
+        kind == "EXCITATION" && return Excitation{Float64}(th * co.eV)
+        kind == "ATTACHMENT" && return Attachment{Float64}(0.0)           # no threshold
+    end
+    proc = Tuple(make_process.(kinds, th))
+    return CollisionTable{Float64, typeof(proc), typeof(grid), typeof(rates), typeof(rb)}(;proc=proc, energy=grid, rate=rates, ratebound=rb)
+end
 
 """
 A collision table based on Chebyshev expansions in a set of binary intervals.

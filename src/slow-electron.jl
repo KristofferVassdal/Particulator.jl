@@ -10,28 +10,38 @@ struct SlowElectronState{T} <: ParticleState{T}
     x::SVector{3, T}
     v::SVector{3, T}
     w::T
-    s::T    
+    t::T
+    s::T
+    r::T    
     active::Bool
+    SlowElectronState{T}(x::SVector{3, T}, v::SVector{3, T}, w::T=1.0, t::T=0.0, s::T=nextcoll(),
+                     r::T=0.0, active=true) where T = new{T}(x, v, w, t, s, r, active)
+    SlowElectronState(x::SVector{3, T}, v::SVector{3, T}, w::T=1.0, t::T=0.0, s::T=nextcoll(),
+                  r::T=0.0, active=true) where T = new{T}(x, v, w, t, s, r, active)
 end
 
-SlowElectronState(x, v, w=1.0, s=nextcoll(), active=true) = SlowElectronState(x, v, w, s, active)
+#SlowElectronState(x, v, w=1.0, s=nextcoll(), active=true) = SlowElectronState(x, v, w, s, active)
 
 particle_type(::Type{SlowElectronState{T}}) where T = SlowElectron
+particle_type(::SlowElectronState) = SlowElectron
 new_particle(::Type{SlowElectron}, x, v) = SlowElectronState(x, v, 1.0, nextcoll(), true)
 
 mass(p::SlowElectronState) = co.electron_mass
 mass(::Type{SlowElectron}) = co.electron_mass
 mass(::SlowElectron) = co.electron_mass
+gamma(p::SlowElectronState) = 1.0 / sqrt(1.0 - dot(p.v, p.v) / co.c^2)
 charge(p::SlowElectronState) = -co.elementary_charge
-
+speed(::Type{SlowElectron}, eng) = co.c * sqrt(1 - (co.electron_mc2 / (co.electron_mc2 + eng))^2)
+momentum(p::SlowElectronState) = mass(p) * p.v
 kinenergy(p::SlowElectronState) = 0.5 * mass(p) * (p.v[1]^2 + p.v[2]^2 + p.v[3]^2)
+velocity(p::SlowElectronState) = p.v
 
 @inline function advance_free_leapfrog(p::SlowElectronState, efield, Δt)
     # Leapfrog integration. Note that x and v are not synchronous.
     Δv = -(Δt * co.elementary_charge / mass(p)) .* efield(p.x)
     v1 = p.v .+ Δv
 
-    SlowElectronState(p.x .+ Δt * v1, v1, p.w, p.s, p.active)
+    SlowElectronState(p.x .+ Δt * v1, v1, p.w, p.s)
 end
 
 
@@ -58,7 +68,7 @@ Yoshida 4th order integrator.
     x4 = x3 + c4 * Δt * v3
     v4 = v3
     
-    SlowElectronState(x4, v4, p.w, p.s, p.active)
+    SlowElectronState(x4, v4, p.w, p.s)
 end
 
 @inline advance_free(p::SlowElectronState, efield, Δt) = advance_free_yoshida(p, efield, Δt)
@@ -110,7 +120,7 @@ function collide(c::Excitation, p::SlowElectronState{T}, energy) where T
     vabs = sqrt(2 * E1 / mass(p))
     v1 = randsphere() .* vabs
 
-    StateChangeOutcome(SlowElectronState{T}(p.x, v1, p.w, p.s, p.active))
+    StateChangeOutcome(SlowElectronState{T}(p.x, v1, p.w, p.t))
 end
 
 function collide(c::Ionization, p::SlowElectronState{T}, energy) where T
@@ -121,8 +131,8 @@ function collide(c::Ionization, p::SlowElectronState{T}, energy) where T
     v  = randsphere() .* vabs
     v1 = randsphere() .* vabs
 
-    p1 = SlowElectronState{T}(p.x,  v, p.w, p.s, p.active)
-    p2 = SlowElectronState{T}(p.x, v1, p.w, nextcoll(), p.active)
+    p1 = SlowElectronState{T}(p.x,  v, p.w, p.t)
+    p2 = SlowElectronState{T}(p.x, v1, p.w, p.t)
     NewParticleOutcome(p1, p2)
 end
 
@@ -135,7 +145,7 @@ function collide(c::Elastic, p::SlowElectronState{T}, energy) where T
     v_cm = (c.mass_ratio / (1 + c.mass_ratio)) .* p.v
     v_final = randsphere() .* norm(p.v - v_cm) .+ v_cm
 
-    StateChangeOutcome(SlowElectronState{T}(p.x, v_final, p.w, p.s, p.active))
+    StateChangeOutcome(SlowElectronState{T}(p.x, v_final, p.w, p.t))
 end
 
 function collide(c::PhotoEmission, p::SlowElectronState{T}, energy) where T

@@ -59,8 +59,35 @@ function advance_particle(psh::RK2Pusher, y::ParticleState, Δt)
                        p = y.p + Δt * (f1 / 4 + 3 * f2 / 4),
                        t = y.t + Δt)
     
+    
     return yf    
 end
+
+function advance_particle(psh::RK2Pusher, y::SlowElectronState, Δt)
+    (;forcing) = psh
+    m = co.electron_mass
+
+    v1 = velocity(y)
+    a1 = force(forcing, y) / m
+
+    y2 = setproperties(y,
+                       x = y.x + 2 * Δt * v1 / 3,
+                       v = v1 + 2 * Δt * a1 / 3,
+                       t = y.t + 2 * Δt / 3)
+    v2 = velocity(y2)
+    a2 = force(forcing, y2) / m
+
+    yf = setproperties(y,
+                         x = y.x + Δt * (v1 / 4 + 3 * v2 / 4),
+                         v = v1 + Δt * (a1 / 4 + 3 * a2 / 4),
+                         t = y.t + Δt)
+
+    @assert dot(yf.v, yf.v) < (0.2 * co.c)^2 "slow electron pushed to v = $(yf.v)"
+                         
+    return yf
+end
+
+
 
 
 # A restricted pusher pushes only one type of particle.

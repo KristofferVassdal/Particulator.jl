@@ -14,6 +14,203 @@ We use two parameters to control photo-ionization noise:
       and correspondingly reduces the number of photons emitted (when photon_multiplier = 1
       the expected number of emitted photons is the electron weight.      
 """
+
+"""
+This module contains the code required to parse BOLSIG+-compatible files.
+
+Direct translation of the BOLSIG+ parser from the bolos package by Alejandro Luque. 
+
+
+Most users would only call `parse_bolsigplus`, documented below.
+"""
+
+# ---------------------------------------------------------------------------
+# Low-level helpers
+# ---------------------------------------------------------------------------
+
+# BOLSIG+'s user guide says that separators must consist of at least five dashes
+const RE_SEP = r"-----+"
+
+# Matches an optional '<' followed by '->', i.e. '->' or '<->'
+const RE_ARROW = r"<?->"
+
+"""
+    _loadtxt(lines)
+
+Parses whitespace-delimited numeric rows from a vector of lines, mirroring
+`np.loadtxt(lines).tolist()`: returns a vector of rows (each a
+`Vector{Float64}`).
+"""
+function _loadtxt(lines::Vector{String})
+    isempty(lines) && return Vector{Float64}[]
+    text = join(lines, "\n")
+    matrix = readdlm(IOBuffer(text))
+    return [collect(Float64, row) for row in eachrow(matrix)]
+end
+
+"""
+    _read_until_sep(fp)
+
+Reads lines from `fp` until a separator line is found.
+"""
+function _read_until_sep(fp)
+    lines = String[]
+    while !eof(fp)
+        line = readline(fp)
+        if occursin(RE_SEP, strip(line))
+            break
+        end
+        push!(lines, strip(line))
+    end
+    return lines
+end
+
+"""
+    _read_block(fp; has_arg=true)
+
+Reads the data of a process, contained in a block. `has_arg` indicates
+whether an argument line has to be read.
+"""
+function _read_block(fp; has_arg::Bool=true)
+    target = strip(readline(fp))
+    arg = has_arg ? strip(readline(fp)) : nothing
+
+    comment = join(_read_until_sep(fp), "\n")
+
+    @debug "Read process '$target'"
+    data = _loadtxt(_read_until_sep(fp))
+
+    return target, arg, comment, data
+end
+
+# ---------------------------------------------------------------------------
+# Specialized functions for each keyword. They all return dictionaries with
+# the relevant attributes.
+# ---------------------------------------------------------------------------
+
+"""
+    _read_momentum(fp)
+
+Reads a MOMENTUM, ELASTIC or EFFECTIVE block.
+"""
+function _read_momentum(fp)
+    target, arg, comment, data = _read_block(fp; has_arg=true)
+    mass_ratio = Base.parse(Float64, split(arg)[1])
+
+    d = Dict(:target => target,
+             :mass_ratio => mass_ratio,
+             :comment => comment,
+             :data => data)
+
+    return d
+end
+
+"""
+    _read_excitation(fp)
+
+Reads an EXCITATION or IONIZATION block.
+"""
+function _read_excitation(fp)
+    target, arg, comment, data = _read_block(fp; has_arg=true)
+
+    parts = [strip(s) for s in split(target, RE_ARROW)]
+    lhs, rhs = parts[1], parts[2]
+
+    d = Dict(:target => lhs,
+             :product => rhs,
+             :comment => comment,
+             :data => data)
+
+    if "<->" in split(target)
+        argvals = split(arg)
+        threshold = Base.parse(Float64, argvals[1])
+        weight_ratio = Base.parse(Float64, argvals[2])
+        d[:weight_ratio] = weight_ratio
+    else
+        threshold = Base.parse(Float64, split(arg)[1])
+    end
+
+    d[:threshold] = threshold
+    return d
+end
+
+"""
+    _read_attachment(fp)
+
+Reads an ATTACHMENT block.
+"""
+function _read_attachment(fp)
+    target, _, comment, data = _read_block(fp; has_arg=false)
+
+    d = Dict(:comment => comment,
+             :data => data,
+             :threshold => 0.0)
+
+    lr = [strip(s) for s in split(target, RE_ARROW)]
+
+    if length(lr) == 2
+        d[:target] = lr[1]
+        d[:product] = lr[2]
+    else
+        d[:target] = target
+    end
+
+    return d
+end
+
+# ---------------------------------------------------------------------------
+# Keyword dispatch table — must come after the _read_* functions above,
+# since Julia needs them to already exist to build this Dict.
+# ---------------------------------------------------------------------------
+
+const KEYWORDS = Dict(
+    "MOMENTUM"   => _read_momentum,
+    "ELASTIC"    => _read_momentum,
+    "EFFECTIVE"  => _read_momentum,
+    "EXCITATION" => _read_excitation,
+    "IONIZATION" => _read_excitation,
+    "ATTACHMENT" => _read_attachment,
+)
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+"""
+    parse_bolsigplus(fp)
+
+Parses a BOLSIG+ cross-sections file.
+
+# Arguments
+- `fp`: an IO object (e.g. an opened file) positioned at the start of the
+  file.
+
+# Returns
+- `processes::Vector{Dict}`: a list of dictionaries, one per process, as
+  found in the file.
+"""
+function parse_bolsigplus(fp)
+    processes = Dict[]
+    while !eof(fp)
+        line = readline(fp)
+        key = strip(line)
+        if haskey(KEYWORDS, key)
+            fread = KEYWORDS[key]
+            @debug "New process of type '$key'"
+
+            d = fread(fp)
+            d[:kind] = key
+            push!(processes, d)
+        end
+    end
+
+    @info "Parsing complete. $(length(processes)) processes read."
+
+    return processes
+end
+
+
+
 function load_lxcat(fnames, densities, energy;
                     photon_weight=1.0,
                     photon_multiplier=1.0)
