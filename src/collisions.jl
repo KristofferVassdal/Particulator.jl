@@ -57,6 +57,14 @@ end
 
 @inline collide(c::NullCollision, k::PS, energy) where PS = NullOutcome{PS}()
 
+
+@inline function add_new!(mpopl, s)
+    popl = get(mpopl, particle_type(typeof(s)))
+    j = add_particle!(popl, s)
+    j > 0 && setr!(popl, j)
+end
+
+
 """
 Set the r field of particle with index `i` using its energy and the safety factor of the population.
 """
@@ -98,10 +106,7 @@ end
     popl1.particles[i] = outcome.state1
     setr!(popl1, i)
 
-    popl2 = get(mpopl, particle_type(PS2))
-    j = add_particle!(popl2, outcome.state2)
-
-    j > 0 && setr!(popl2, j)
+    add_new!(mpopl, outcome.state2)
 end
 
 @inline function apply!(mpopl, outcome::RemoveParticleOutcome{PS}, i) where PS
@@ -113,9 +118,7 @@ end
     popl1 = get(mpopl, particle_type(PS1))
     remove_particle!(popl1, i)
 
-    popl2 = get(mpopl, particle_type(PS2))
-    j = add_particle!(popl2, outcome.state2)
-    j > 0 && setr!(popl2, j)
+    add_new!(mpopl, outcome.state2)
 
 end
 
@@ -123,13 +126,10 @@ end
     popl1 = get(mpopl, particle_type(PS1))
     remove_particle!(popl1, i)
 
-    popl2 = get(mpopl, particle_type(PS2))
-    i = add_particle!(popl2, outcome.state2)    
-    i > 0 && setr!(popl2, i)
-    
-    popl3 = get(mpopl, particle_type(PS3))
-    j = add_particle!(popl3, outcome.state3)    
-    j > 0 && setr!(popl3, j)
+    add_new!(mpopl, outcome.state2)    
+
+    add_new!(mpopl, outcome.state3)    
+
 end
 
 

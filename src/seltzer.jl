@@ -65,9 +65,7 @@ end
 
 
 function collide(sb::SeltzerBerger, electron::ElectronState{T}, eng) where T
-    mc2 = co.electron_mc2
-    m2c2 = co.electron_mass^2 * co.c^2
-    m2c4 = mc2^2
+
     
     k = eng * sample_secondary_energy(sb, eng)
     @assert k < eng "Secondary energy surpasses primary: $(k / co.eV) eV ~ $(eng / co.eV) eV"
@@ -84,7 +82,6 @@ function collide(sb::SeltzerBerger, electron::ElectronState{T}, eng) where T
     # Electron momentum
     p0 = momentum(electron)
     p_e = p0 - p_ph
-    
     NewParticleOutcome(ElectronState{T}(electron.x, p_e, electron.w, electron.t),
                        PhotonState{T}(electron.x, p_ph, electron.w, electron.t))
 end

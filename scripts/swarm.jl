@@ -42,8 +42,9 @@ function main(;n_init_particles=2000,
               killthresh = 1e3 * co.eV,
               seed = 0,
               Kthresh = 1e5 * co.eV,
+              Zero_cut = 1000 * co.eV,
               zwall=nothing,
-              nloops = 22,
+              nloops = 10,
               tstep = 1e-7,
               save_every = 5,
               outdir = joinpath(@__DIR__, "..", "runs",
@@ -60,7 +61,7 @@ function main(;n_init_particles=2000,
     cross = parse_bolsigplus(Lxcat_file)
     close(Lxcat_file)
     # Build collision tables
-    lowcolls = collision_table_from_lxcat(cross, SlowElectron, Fdt; safety=safety)
+    lowcolls = collision_table_from_lxcat(cross, SlowElectron, Fdt, 1.2*Zero_cut; safety=safety)
     ecolls = build_electron_collision_table(composition, Fdt; safety)    
     pcolls = build_positron_collision_table(composition, Kthresh, Fdt; safety)
     γcolls = build_photon_collision_table(composition, Kthresh)
@@ -71,10 +72,10 @@ function main(;n_init_particles=2000,
     p0 = SA[0.0, 1e-6 * pz, pz]  
     x = SA[0.0, 0.0, 0.0]
     init_p = [ElectronState(x, p0)]
-    #init_particles = map(1:n_init_particles) do _
-    #    x = SA[0.0, 0.0, 0.0]
-    #    ElectronState(x, p0)
-    #end
+    init_particles = map(1:n_init_particles) do _
+        x = SA[0.0, 0.0, 0.0]
+        ElectronState(x, p0)
+    end
     
     # Initialize particles with a log-uniform distribution
     #λ, Emin, Emax = 7.3e6 * co.eV, 0.1e6 * co.eV, 50e6 * co.eV
@@ -89,10 +90,9 @@ function main(;n_init_particles=2000,
     v_slow = co.c * sqrt(1 - (mc2 / (mc2 + K_slow))^2)    # ≈ 1.88e6 m/s
     slow1  = [SlowElectronState(SA[0.0, 0.0, 0.0], SA[0.0, 1e-6 * v_slow, v_slow]) for _ in 1:100]
 
-    Zero_cut = 300 * co.eV
     # Construct populations
     slow_electrons = Population(maxp, SlowElectronState{Float64}[], lowcolls, 1*co.eV, 100 * co.eV)
-    electrons = Population(maxp, init_p, ecolls, Zero_cut)
+    electrons = Population(maxp, init_particles, ecolls, Zero_cut)
     photons   = Population(maxp, PhotonState{Float64}[], γcolls, Kthresh)
     positrons = Population(maxp, PositronState{Float64}[], pcolls, Kthresh)
 
@@ -130,7 +130,7 @@ function main(;n_init_particles=2000,
     mkpath(outdir)
     @info "Writing output to $(abspath(outdir))"
     params = (; init_energy, efield = efield_value, dt, tstep, nloops, ntarget, ntarget_slow,
-              safety, Kthresh, seed, maxp, composition = Dict(composition))
+              safety, Kthresh, Zero_cut, seed, maxp, composition = Dict(composition))
 
     t = 0.0
     save_snapshot(outdir, 0, t, population_index; params)
@@ -139,12 +139,16 @@ function main(;n_init_particles=2000,
         t += tstep
         # Counts are logged *before* roulette, so growth in work per loop shows up here.
         log_loop(outdir, i, t, elapsed, population_index)
-        n = nactives(electrons)
-        n > ntarget && roulette!(ntarget / n, electrons)
-        n_s = nactives(slow_electrons)
-        n_s > ntarget_slow && roulette!(ntarget_slow / n_s, slow_electrons)
         if i % save_every == 0 || i == nloops
             save_snapshot(outdir, i, t, population_index; params)
+        end
+        if i<nloops
+            n = nactives(electrons)
+            n > ntarget && roulette!(ntarget / n, electrons)
+            n_s = nactives(slow_electrons)
+            n_s > ntarget_slow && roulette!(ntarget_slow / n_s, slow_electrons)
+            n_sph = nactives(photons)
+            n_sph > ntarget_slow && roulette!(ntarget_slow / n_sph, photons)
         end
     end
     
@@ -338,18 +342,20 @@ end
 
 
 """
-    snapshot_spectra(dir; species, loops, bins, Emin, Emax, norm_above)
+    snapshot_spectra(dir; species, loops, bins, Emin, Emax, norm_range)
 
 Weighted energy spectra (particles / eV) for each snapshot in `dir` and each population in
-`species`. All species in a snapshot share one normalisation: the integral of the `electron`
-spectrum above `norm_above` eV (as in `plotspec`). Use `norm_above = nothing` to keep the raw
-weighted counts. Snapshots without electrons above `norm_above` are skipped with a warning.
+`species`. All species in a snapshot share one normalisation: the total weight of `electron`
+particles with `norm_range[1] ≤ K ≤ norm_range[2]` (eV), so the electron spectrum integrates
+to 1 over that range. The sum is taken over the particles themselves, so it does not depend
+on `bins`, `Emin` or `Emax`. Use `norm_range = nothing` to keep the raw weighted counts.
+Snapshots without electrons in `norm_range` are skipped with a warning.
 
 Returns `(; E, edges, spectra)` where `spectra` is a vector of
 `(; loop, t, f = Dict(species => vector))`.
 """
 function snapshot_spectra(dir; species = ("electron", "slow_electron"), loops = nothing,
-                          bins = 120, Emin = 1.0, Emax = 1e8, norm_above = 1e6)
+                          bins = 120, Emin = 1.0, Emax = 1e8, norm_range = (1e6, 1e8))
     edges = 10 .^ range(log10(Emin), log10(Emax), length = bins + 1)
     dE = diff(edges)
     E = sqrt.(edges[1:end-1] .* edges[2:end])
@@ -363,12 +369,12 @@ function snapshot_spectra(dir; species = ("electron", "slow_electron"), loops = 
         jldopen(file, "r") do d
             f = Dict(s => hist(d["$s/K_eV"], d["$s/w"]) for s in species)
             scale = 1.0
-            if !isnothing(norm_above)
-                fe = hist(d["electron/K_eV"], d["electron/w"])
-                m = edges[1:end-1] .>= norm_above * (1 - 1e-9)
-                scale = sum(fe[m] .* dE[m])
+            if !isnothing(norm_range)
+                lo, hi = norm_range
+                K, w = d["electron/K_eV"], d["electron/w"]
+                scale = sum(w[(K .>= lo) .& (K .<= hi)]; init = 0.0)
                 if !(scale > 0)
-                    @warn "loop $loop: no electrons above $norm_above eV, skipped"
+                    @warn "loop $loop: no electrons in $(lo)–$(hi) eV, skipped"
                     return
                 end
             end
@@ -383,28 +389,58 @@ end
 
 
 """
-    plot_snapshots(dir; species, loops, bins, Emin, Emax, norm_above)
+    read_reference(file)
+
+Read a digitised reference curve: a text/CSV file with two columns, energy (eV) and
+distribution (eV⁻¹), separated by commas, semicolons, tabs or spaces. Lines that do not
+start with two numbers (headers, comments) are ignored. Returns `(E, f)` sorted by energy.
+"""
+function read_reference(file)
+    E, f = Float64[], Float64[]
+    for line in eachline(file)
+        cols = split(strip(line), r"[,;\s]+"; keepempty = false)
+        length(cols) >= 2 || continue
+        a, b = tryparse(Float64, cols[1]), tryparse(Float64, cols[2])
+        (isnothing(a) || isnothing(b)) && continue
+        push!(E, a); push!(f, b)
+    end
+    isempty(E) && error("no numeric data in $file")
+    i = sortperm(E)
+    return E[i], f[i]
+end
+
+
+"""
+    plot_snapshots(dir; species, references, kw...)
 
 Plot the energy spectra stored in the snapshot files in `dir` (a run folder written by
 `main`), one curve per snapshot coloured by time, with a different line style per species.
-Keyword arguments are passed to `snapshot_spectra`. Returns its result.
+
+`references` is a list of `label => file` pairs; each file is a digitised curve (see
+`read_reference`) drawn on top in black/grey. Curves are coloured by time with the matplotlib
+colormap `cmap`, using only the part `crange` of it (0 = start, 1 = end); the default
+`(0.0, 0.8)` stops viridis before the bright yellow. Other keyword arguments (`loops`, `bins`,
+`Emin`, `Emax`, `norm_range`) are passed to `snapshot_spectra`. Returns its result.
 
 ```julia
 julia> Swarm.plot_snapshots("runs/swarm_20261117_101500")
-julia> Swarm.plot_snapshots(dir; loops = [10, 15, 20, 22], species = ("electron",))
+julia> Swarm.plot_snapshots(dir; loops = [5, 10], species = ("electron", "slow_electron"),
+                            references = ["Paper, 4.3 kV/cm" => "data/paper_4p3kVcm.csv"])
 ```
 """
-function plot_snapshots(dir; species = ("electron", "slow_electron"), kw...)
+function plot_snapshots(dir; species = ("electron", "slow_electron"), references = (),
+                        cmap = "viridis", crange = (0.0, 0.8), kw...)
     res = snapshot_spectra(dir; species, kw...)
     isempty(res.spectra) && error("nothing to plot")
     styles = Dict("electron" => "-", "slow_electron" => "--",
                   "photon" => ":", "positron" => "-.")
-    cmap = plt.get_cmap("viridis")
+    cm = plt.get_cmap(cmap)
     tmax = maximum(s.t for s in res.spectra)
+    c0, c1 = crange
 
     plt.figure(figsize = (9, 6))
     for s in res.spectra
-        color = cmap(tmax > 0 ? s.t / tmax : 0.0)
+        color = cm(c0 + (c1 - c0) * (tmax > 0 ? s.t / tmax : 0.0))
         for (k, sp) in enumerate(species)
             f = s.f[sp]
             ok = f .> 0
@@ -413,14 +449,17 @@ function plot_snapshots(dir; species = ("electron", "slow_electron"), kw...)
             plt.loglog(res.E[ok], f[ok], get(styles, sp, "-"); color, lw = 2, label)
         end
     end
-    # Line-style key for the species
-    for sp in species
-        plt.plot([], [], get(styles, sp, "-"); color = "gray", label = replace(sp, "_" => " "))
+    # Digitised reference curves
+    refstyles = (("k", "-"), ("0.45", "--"), ("k", ":"), ("0.45", "-."))
+    for (k, (label, file)) in enumerate(references)
+        Eref, fref = read_reference(file)
+        color, ls = refstyles[mod1(k, length(refstyles))]
+        plt.loglog(Eref, fref, ls; color, lw = 1.5, alpha = 0.9, label = label, zorder = 10)
     end
 
     plt.xlabel("Energy (eV)", fontsize = 20)
-    norm_above = get(kw, :norm_above, 1e6)
-    plt.ylabel(isnothing(norm_above) ? "Weighted particles / eV" :
+    norm_range = get(kw, :norm_range, (1e6, 1e8))
+    plt.ylabel(isnothing(norm_range) ? "Weighted particles / eV" :
                "Particles / eV (normalised)", fontsize = 20)
     plt.tick_params(axis = "both", which = "major", labelsize = 16, length = 6, width = 1.2)
     plt.tick_params(axis = "both", which = "minor", length = 3)

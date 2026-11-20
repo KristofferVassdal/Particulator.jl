@@ -31,9 +31,10 @@ mass(::Type{SlowElectron}) = co.electron_mass
 mass(::SlowElectron) = co.electron_mass
 gamma(p::SlowElectronState) = 1.0 / sqrt(1.0 - dot(p.v, p.v) / co.c^2)
 charge(p::SlowElectronState) = -co.elementary_charge
+#speed(p::SlowElectronState) = momentum(p) * (1 / (co.electron_mass * gamma(p)))
 speed(::Type{SlowElectron}, eng) = co.c * sqrt(1 - (co.electron_mc2 / (co.electron_mc2 + eng))^2)
-momentum(p::SlowElectronState) = mass(p) * p.v
-kinenergy(p::SlowElectronState) = 0.5 * mass(p) * (p.v[1]^2 + p.v[2]^2 + p.v[3]^2)
+momentum(p::SlowElectronState) = mass(p) * gamma(p) * p.v
+kinenergy(p::SlowElectronState) = (sqrt(co.electron_mc2^2 + co.c^2 * dot(momentum(p), momentum(p))) - co.electron_mc2)
 velocity(p::SlowElectronState) = p.v
 
 @inline function advance_free_leapfrog(p::SlowElectronState, efield, Δt)
@@ -83,6 +84,7 @@ end
 
 struct Ionization{T} <: CollisionProcess
     threshold::T
+    orbitals::Vector{RBEB{T}}
 end
 
 struct Attachment{T} <: CollisionProcess
@@ -117,22 +119,38 @@ end
 
 function collide(c::Excitation, p::SlowElectronState{T}, energy) where T
     E1 = max(0, energy - c.threshold)
-    vabs = sqrt(2 * E1 / mass(p))
+    vabs = speed(SlowElectron, E1)
     v1 = randsphere() .* vabs
 
     StateChangeOutcome(SlowElectronState{T}(p.x, v1, p.w, p.t))
 end
 
 function collide(c::Ionization, p::SlowElectronState{T}, energy) where T
-    # Energy equipartitiom
-    E1 = max(0, energy - c.threshold) / 2
-    vabs = sqrt(2 * E1 / mass(p))
+    mc2 = co.electron_mc2
+    E0 = energy
+    wts = [totalcs(o, E0) for o in c.orbitals]
+    s = sum(wts)
+    E0 > 0 || return NullOutcome{SlowElectronState{T}}()
+    B = wsample(c.orbitals, wts).B
+    
+    E2 = rbeb_sample(E0, B)
+    E1 = E0 - E2 - B
 
-    v  = randsphere() .* vabs
-    v1 = randsphere() .* vabs
 
-    p1 = SlowElectronState{T}(p.x,  v, p.w, p.t)
-    p2 = SlowElectronState{T}(p.x, v1, p.w, p.t)
+    p1 = sqrt(E1^2 + 2 * mc2 * E1) / co.c
+    p2 = sqrt(E2^2 + 2 * mc2 * E2) / co.c
+
+    # Lehtinen 1999
+    cosθ1 = sqrt(E1 * (E0 + 2mc2) / (E0 * (E1 + 2mc2)))    
+    cosθ2 = sqrt(E2 * (E0 + 2mc2) / (E0 * (E2 + 2mc2)))
+
+    ϕ = 2π * rand()
+
+    v1 = turn(p.v, cosθ1, ϕ, p1) / (mass(p) * (1 + E1 / mc2))
+    v2 = turn(p.v, cosθ2, -ϕ, p2) / (mass(p) * (1 + E2 / mc2))
+
+    p1 = SlowElectronState{T}(p.x,  v1, p.w, p.t)
+    p2 = SlowElectronState{T}(p.x, v2, p.w, p.t)
     NewParticleOutcome(p1, p2)
 end
 
@@ -152,3 +170,32 @@ function collide(c::PhotoEmission, p::SlowElectronState{T}, energy) where T
     nphot = rand(Poisson(p.w / c.photon_multiplier / c.photon_weight))
     MultiplePhotonOutcome(nphot, p, c)
 end
+
+
+@inline function add_new!(mpopl, s::ElectronState)
+    if has_slow(mpopl) && kinenergy(s) <= get(mpopl, Electron).energy_cut
+        add_new!(mpopl, to_slow(s))
+    else
+        popl = get(mpopl, Electron)
+        j = add_particle!(popl, s)
+        j > 0 && setr!(popl, j)
+    end
+end
+
+@inline function apply!(mpopl, outcome::NewParticleOutcome{<:ElectronState, PS2}, i) where PS2
+    popl1 = get(mpopl, Electron)
+    s1 = outcome.state1
+    if has_slow(mpopl) && kinenergy(s1) <= popl1.energy_cut
+        remove_particle!(popl1, i)
+        add_new!(mpopl, to_slow(s1))
+    else
+        popl1.particles[i] = s1
+        setr!(popl1, i)
+    end
+    add_new!(mpopl, outcome.state2)
+end
+
+to_slow(s::ElectronState{T}) where T =
+    SlowElectronState{T}(s.x, s.p / (mass(s) * gamma(s)), s.w, s.t)
+
+has_slow(mpopl) = haskey(mpopl.index, :slow_electron)

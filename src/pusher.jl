@@ -65,27 +65,26 @@ end
 
 function advance_particle(psh::RK2Pusher, y::SlowElectronState, Δt)
     (;forcing) = psh
-    m = co.electron_mass
+    m, c = co.electron_mass, co.c
+    vel(p) = p / (m * sqrt(1 + dot(p, p) / (m * c)^2))
 
+    p0 = momentum(y)
     v1 = velocity(y)
-    a1 = force(forcing, y) / m
+    f1 = force(forcing, y)
 
     y2 = setproperties(y,
                        x = y.x + 2 * Δt * v1 / 3,
-                       v = v1 + 2 * Δt * a1 / 3,
+                       v = vel(p0 + 2 * Δt * f1 / 3),
                        t = y.t + 2 * Δt / 3)
     v2 = velocity(y2)
-    a2 = force(forcing, y2) / m
+    f2 = force(forcing, y2)
 
-    yf = setproperties(y,
+    return setproperties(y,
                          x = y.x + Δt * (v1 / 4 + 3 * v2 / 4),
-                         v = v1 + Δt * (a1 / 4 + 3 * a2 / 4),
+                         v = vel(p0 + Δt * (f1 / 4 + 3 * f2 / 4)),
                          t = y.t + Δt)
-
-    @assert dot(yf.v, yf.v) < (0.2 * co.c)^2 "slow electron pushed to v = $(yf.v)"
-                         
-    return yf
 end
+
 
 
 

@@ -63,7 +63,7 @@ function collide(c::RBEB, electron::ElectronState{T}, eng) where T
 
     @assert E2 < E1
     
-    p0 = sqrt(E0^2 + 2 * mc2 * E0) / co.c
+
     p1 = sqrt(E1^2 + 2 * mc2 * E1) / co.c
     p2 = sqrt(E2^2 + 2 * mc2 * E2) / co.c
 
@@ -75,15 +75,9 @@ function collide(c::RBEB, electron::ElectronState{T}, eng) where T
 
     p1vec = turn(electron.p, cosθ1, ϕ, p1)
     p2vec = turn(electron.p, cosθ2, -ϕ, p2)
-    γ2 = (E2 + mc2) / mc2
-    v2vec = p2vec / (mass(electron) * γ2)
-    if E2 > 3e2 * co.eV
+    
     NewParticleOutcome(ElectronState{T}(electron.x, p1vec, electron.w, electron.t),
                        ElectronState{T}(electron.x, p2vec, electron.w, electron.t))
-    else
-        NewParticleOutcome(ElectronState{T}(electron.x, p1vec, electron.w, electron.t),
-                       SlowElectronState{T}(electron.x, v2vec, electron.w, electron.t))
-    end
 end
 
 

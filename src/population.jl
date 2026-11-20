@@ -99,6 +99,11 @@ function nactives(popl::Population)
     return n
 end
 
+@inline function birth_survival(popl::Population, K; α = 1.0, pmin = 1e-2)
+    cull = popl.cull
+    (cull <= 0 || K >= cull) && return one(K)
+    return max(pmin, (K / cull)^α)
+end
 
 """
 Add a particle to the population `popl` with super-state super_state.
@@ -108,9 +113,11 @@ function add_particle!(popl::Population, state::ParticleState)
     (kinenergy(state) < popl.energy_cut) && return -1
 
     K = kinenergy(state)
-    p = K < 1e2*co.eV ? 5e-3 : 1.0
-    rand() < p || return -1                       # killed at birth
-    state = setproperties(state, w = state.w / p)
+    p = birth_survival(popl, K)
+    if p < 1
+        rand() < p || return -1                   # only this particle is affected
+        state = setproperties(state, w = state.w / p)
+    end                      # killed at birth
 
     @assert n[] < length(particles) "Maximum number of particles reached"
 

@@ -68,7 +68,7 @@ function loglog_interp(E, σ)
     end
 end
 
-function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt; safety=1.1)
+function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt, Emaximum; safety=1.1)
     proc = Vector(undef, length(cross))
     E = Vector(undef, length(cross))
     σ = Vector(undef, length(cross))
@@ -91,7 +91,7 @@ function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt; safety=1
     E = E*co.eV
     th = th
     Emin = 1*co.eV 
-    Emax = 320*co.eV
+    Emax = Emaximum
     grid = LogLinRange(log(Emin), log(Emax), 10000)
     f = loglog_interp.(E, σ)
     rates = zeros(length(proc), length(grid))
@@ -129,13 +129,14 @@ function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt; safety=1
         rb[k] = maximum(@view total[rb1:rb2])
     end
     kinds = tuple([proc[i][2] for i in 1:length(proc)]...)
-    function make_process(kind, th)
+    targets = tuple([proc[i][1] for i in 1:length(proc)]...)
+    function make_process(kind, th, target)
         kind == "EFFECTIVE"  && return Elastic{Float64}(th)               # mass ratio
-        kind == "IONIZATION" && return Ionization{Float64}(th * co.eV)
+        kind == "IONIZATION" && return Ionization{Float64}(th * co.eV, ORBITALS[target])
         kind == "EXCITATION" && return Excitation{Float64}(th * co.eV)
         kind == "ATTACHMENT" && return Attachment{Float64}(0.0)           # no threshold
     end
-    proc = Tuple(make_process.(kinds, th))
+    proc = Tuple(make_process.(kinds, th, targets))
     return CollisionTable{Float64, typeof(proc), typeof(grid), typeof(rates), typeof(rb)}(;proc=proc, energy=grid, rate=rates, ratebound=rb)
 end
 
