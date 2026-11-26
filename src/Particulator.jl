@@ -15,7 +15,7 @@ export LogLinRange, MultiPopulation, RelativisticCoulomb, totalcs, CollisionTabl
     HomogeneousField, DoubleLayerField, StepField, ConfinedDoubleLayerField, run!, roulette!,
     ElectromagneticField, ContinuumLoss, ChebContinuumLoss, RK2Pusher, RestrictedPusher, NullPusher,
     NullForcing, CombinedForcing, FieldForcing,
-    RestrictedForcing, load_lxcat, parse_bolsigplus
+    RestrictedForcing, load_lxcat, parse_bolsigplus, has_slow
 
 
 using Base.Threads: Atomic, @threads, atomic_add!

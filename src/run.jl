@@ -1,12 +1,15 @@
-function run!(mpopl, pusher, tfinal, dt, callback; output_dt=tfinal / 20, verbosity=1)
-    t = 0.0
+function run!(mpopl, pusher, tfinal, dt, callback; t0 = 0.0, output_dt=tfinal / 20, verbosity=1)
+    t = t0
     nxt = t
     isave = 0
     
     while t < tfinal
         advance!(mpopl, pusher, t + dt, callback)
-        ElectronStateToSlowElectronState!(mpopl)
-        SlowElectronStateToElectronState!(mpopl)
+        if has_slow(mpopl)
+            roulette_window!(get(mpopl, SlowElectron), 2co.eV, 500_000)
+            ElectronStateToSlowElectronState!(mpopl)
+            SlowElectronStateToElectronState!(mpopl)
+        end
         droplow!(mpopl)
         t += dt
         cont = onstep(callback, mpopl, t)

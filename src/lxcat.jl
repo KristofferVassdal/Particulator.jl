@@ -170,6 +170,7 @@ const KEYWORDS = Dict(
     "EXCITATION" => _read_excitation,
     "IONIZATION" => _read_excitation,
     "ATTACHMENT" => _read_attachment,
+    "THREE" => _read_attachment,
 )
 
 # ---------------------------------------------------------------------------

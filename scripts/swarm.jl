@@ -44,9 +44,9 @@ function main(;n_init_particles=2000,
               Kthresh = 1e5 * co.eV,
               Zero_cut = 1000 * co.eV,
               zwall=nothing,
-              nloops = 10,
+              nloops = 13,
               tstep = 1e-7,
-              save_every = 5,
+              save_every = 1,
               outdir = joinpath(@__DIR__, "..", "runs",
                                 "swarm_" * Dates.format(now(), "yyyymmdd_HHMMSS")),
               composition = Dict("N2" => co.nair * 0.79,
@@ -91,13 +91,19 @@ function main(;n_init_particles=2000,
     slow1  = [SlowElectronState(SA[0.0, 0.0, 0.0], SA[0.0, 1e-6 * v_slow, v_slow]) for _ in 1:100]
 
     # Construct populations
-    slow_electrons = Population(maxp, SlowElectronState{Float64}[], lowcolls, 1*co.eV, 100 * co.eV)
+    slow_electrons = Population(maxp, SlowElectronState{Float64}[], lowcolls, 0.1*co.eV, 100 * co.eV)
     electrons = Population(maxp, init_particles, ecolls, Zero_cut)
     photons   = Population(maxp, PhotonState{Float64}[], γcolls, Kthresh)
     positrons = Population(maxp, PositronState{Float64}[], pcolls, Kthresh)
 
+    #population_index = Pair{Symbol, Any}[:electron => electrons,
+    #                                     :slow_electron => slow_electrons,
+    #                                     :photon => photons,
+    #                                     :positron => positrons]
+    #mpopl = MultiPopulation(population_index...)
+    #init!(mpopl)
+
     population_index = Pair{Symbol, Any}[:electron => electrons,
-                                         :slow_electron => slow_electrons,
                                          :photon => photons,
                                          :positron => positrons]
     mpopl = MultiPopulation(population_index...)
@@ -126,27 +132,36 @@ function main(;n_init_particles=2000,
     else
         callback = VoidCallback();
     end
-
+    "population_index for log_loop, slow is zero"
+    population_index = Pair{Symbol, Any}[:electron => electrons,
+                                         :photon => photons,
+                                         :positron => positrons,
+                                         :slow_electron => slow_electrons]
     mkpath(outdir)
     @info "Writing output to $(abspath(outdir))"
     params = (; init_energy, efield = efield_value, dt, tstep, nloops, ntarget, ntarget_slow,
               safety, Kthresh, Zero_cut, seed, maxp, composition = Dict(composition))
 
     t = 0.0
-    save_snapshot(outdir, 0, t, population_index; params)
     for i in 1:nloops
-        elapsed = @elapsed run!(mpopl, pusher, t + tstep, dt, callback; output_dt = nothing)
+        if !has_slow(mpopl) && i== max(1, nloops - 2)
+            population_index = Pair{Symbol, Any}[:electron => electrons,
+                                         :photon => photons,
+                                         :positron => positrons,
+                                         :slow_electron => slow_electrons]
+            mpopl = MultiPopulation(population_index...)
+            init!(mpopl)
+        end
+        elapsed = @elapsed run!(mpopl, pusher, t + tstep, dt, callback; t0 = t, output_dt = nothing)
         t += tstep
         # Counts are logged *before* roulette, so growth in work per loop shows up here.
         log_loop(outdir, i, t, elapsed, population_index)
-        if i % save_every == 0 || i == nloops
+        if i % save_every == 0 && has_slow(mpopl) || i == nloops
             save_snapshot(outdir, i, t, population_index; params)
         end
         if i<nloops
             n = nactives(electrons)
             n > ntarget && roulette!(ntarget / n, electrons)
-            n_s = nactives(slow_electrons)
-            n_s > ntarget_slow && roulette!(ntarget_slow / n_s, slow_electrons)
             n_sph = nactives(photons)
             n_sph > ntarget_slow && roulette!(ntarget_slow / n_sph, photons)
         end

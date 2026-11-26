@@ -89,8 +89,7 @@ function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt, Emaximum
     end
     end
     E = E*co.eV
-    th = th
-    Emin = 1*co.eV 
+    Emin = 0.1*co.eV 
     Emax = Emaximum
     grid = LogLinRange(log(Emin), log(Emax), 10000)
     f = loglog_interp.(E, σ)
@@ -103,11 +102,15 @@ function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt, Emaximum
         else
             n_target = co.nair
         end
-        σj = f[j].(grid)                                                  
+        σj = f[j].(grid)
+        if proc[j][2] == "THREE"
+            itp = linear_interpolation(E[j], σ[j]; extrapolation_bc = 0.0)
+            σj = itp.(grid) .* (n_target * 1e-6)    # Phelps: σ is per gas density in cm⁻³
+        end
         # EFFECTIVE = elastic momentum transfer + all inelastic (excitation, ionization,   
         # attachment) of the same molecule. Subtract them to get the elastic part only.    
         if proc[j][2] == "EFFECTIVE"                                                       
-            for k in 1:length(proc)                                                        
+            for k in 1:length(cross)                                                        
                 k != j && proc[k][1] == proc[j][1] &&                                      
                     proc[k][2] in ("EXCITATION", "IONIZATION", "ATTACHMENT") || continue   
                 σj .-= f[k].(grid)                                                         
@@ -135,6 +138,7 @@ function collision_table_from_lxcat(cross::Vector{Dict}, particle, Fdt, Emaximum
         kind == "IONIZATION" && return Ionization{Float64}(th * co.eV, ORBITALS[target])
         kind == "EXCITATION" && return Excitation{Float64}(th * co.eV)
         kind == "ATTACHMENT" && return Attachment{Float64}(0.0)           # no threshold
+        kind == "THREE" && return Attachment{Float64}(0.0) 
     end
     proc = Tuple(make_process.(kinds, th, targets))
     return CollisionTable{Float64, typeof(proc), typeof(grid), typeof(rates), typeof(rb)}(;proc=proc, energy=grid, rate=rates, ratebound=rb)

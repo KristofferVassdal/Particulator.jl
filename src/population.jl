@@ -307,6 +307,25 @@ function roulette!(f::Function, popl::Population)
 end
 
 """
+Apply Russian roulette to the a population with Kinenergy < Kmax and n > ntarget. 
+"""
+function roulette_window!(popl, Kmax, ntarget)
+    W, n = 0.0, 0
+    for i in 1:popl.n[]
+        l = LazyRow(popl.particles, i)
+        (l.active && kinenergy(instantiate(l)) < Kmax) || continue
+        W += l.w; n += 1
+    end
+    n > ntarget || return
+    wmin = W / ntarget
+    for i in 1:popl.n[]
+        l = LazyRow(popl.particles, i)
+        (l.active && l.w < wmin && kinenergy(instantiate(l)) < Kmax) || continue
+        rand() < l.w / wmin ? (l.w = wmin) : remove_particle!(popl, i)
+    end
+end
+
+"""
 Apply Russian roulette with a constant probability of dropping a particle.
 """
 roulette!(f::Number, popl::Population) = roulette!(_ -> f, popl)
@@ -333,7 +352,7 @@ function split!(f::Function, popl::Population)
 end
 
 """
-Apply Russian roulette with a constant probability of dropping a particle.
+Apply split with a constant number of particles split from it.
 """
 split!(f::Number, popl::Population) = split!(_ -> f, popl)
 
